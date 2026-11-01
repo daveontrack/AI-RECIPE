@@ -1,2 +1,1 @@
-# Full Stack AI Recipe Platform with Next JS, Neon DB, Tailwind, Strapi, Arcjet, Shadcn UI Tutorial 🔥🔥
-"# AI-RECIPE" 
+# Full Stack AI Recipe Platform with Next JS, supabase , Postgre DB, Tailwind, Arcjet, Shadcn UI 
