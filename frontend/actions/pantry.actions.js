@@ -1,16 +1,25 @@
 "use server";
 
 import { checkUser } from "@/lib/checkUser";
+import { getSupabaseAdmin } from "@/lib/supabase";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { freePantryScans, proTierLimit } from "@/lib/arcjet";
 import { request } from "@arcjet/next";
 
-const STRAPI_URL =
-  process.env.NEXT_PUBLIC_STRAPI_URL || "http://localhost:1337";
-const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
+// camelCase aliases keep the UI components on their existing field names
+const ITEM_FIELDS = `
+  id,
+  documentId:id,
+  name,
+  quantity,
+  imageUrl:image_url,
+  createdAt:created_at
+`;
+
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 // Scan image with Gemini Vision
 export async function scanPantryImage(formData) {
@@ -58,7 +67,7 @@ export async function scanPantryImage(formData) {
     const base64Image = buffer.toString("base64");
 
     // Call Gemini Vision API
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
     const prompt = `
 You are a professional chef and ingredient recognition expert. Analyze this image of a pantry/fridge and identify all visible food ingredients.
@@ -140,29 +149,23 @@ export async function saveToPantry(formData) {
       throw new Error("No ingredients to save");
     }
 
-    // Create pantry items in Strapi
-    const savedItems = [];
-    for (const ingredient of ingredients) {
-      const response = await fetch(`${STRAPI_URL}/api/pantry-items`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        body: JSON.stringify({
-          data: {
-            name: ingredient.name,
-            quantity: ingredient.quantity,
-            imageUrl: "",
-            owner: user.id,
-          },
-        }),
-      });
+    // Insert all scanned items in one round trip
+    const supabase = getSupabaseAdmin();
+    const { data: savedItems, error } = await supabase
+      .from("pantry_items")
+      .insert(
+        ingredients.map((ingredient) => ({
+          name: ingredient.name,
+          quantity: ingredient.quantity,
+          image_url: "",
+          owner_clerk_id: user.id,
+        }))
+      )
+      .select(ITEM_FIELDS);
 
-      if (response.ok) {
-        const data = await response.json();
-        savedItems.push(data.data);
-      }
+    if (error) {
+      console.error("Error saving pantry items:", error.message);
+      throw new Error("Failed to save items");
     }
 
     return {
@@ -191,33 +194,26 @@ export async function addPantryItemManually(formData) {
       throw new Error("Name and quantity are required");
     }
 
-    const response = await fetch(`${STRAPI_URL}/api/pantry-items`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-      },
-      body: JSON.stringify({
-        data: {
-          name: name.trim(),
-          quantity: quantity.trim(),
-          imageUrl: "",
-          owner: user.id,
-        },
-      }),
-    });
+    const supabase = getSupabaseAdmin();
+    const { data: item, error } = await supabase
+      .from("pantry_items")
+      .insert({
+        name: name.trim(),
+        quantity: quantity.trim(),
+        image_url: "",
+        owner_clerk_id: user.id,
+      })
+      .select(ITEM_FIELDS)
+      .single();
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Failed to add item:", errorText);
+    if (error) {
+      console.error("Failed to add item:", error.message);
       throw new Error("Failed to add item to pantry");
     }
 
-    const data = await response.json();
-
     return {
       success: true,
-      item: data.data,
+      item,
       message: "Item added successfully!",
     };
   } catch (error) {
@@ -234,27 +230,22 @@ export async function getPantryItems() {
       throw new Error("User not authenticated");
     }
 
-    const response = await fetch(
-      `${STRAPI_URL}/api/pantry-items?filters[owner][id][$eq]=${user.id}&sort=createdAt:desc`,
-      {
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        cache: "no-store",
-      }
-    );
+    const supabase = getSupabaseAdmin();
+    const { data: items, error } = await supabase
+      .from("pantry_items")
+      .select(ITEM_FIELDS)
+      .eq("owner_clerk_id", user.id)
+      .order("created_at", { ascending: false });
 
-    if (!response.ok) {
+    if (error) {
       throw new Error("Failed to fetch pantry items");
     }
-
-    const data = await response.json();
 
     const isPro = user.subscriptionTier === "pro";
 
     return {
       success: true,
-      items: data.data || [],
+      items: items || [],
       scansLimit: isPro ? "unlimited" : 10,
     };
   } catch (error) {
@@ -273,14 +264,14 @@ export async function deletePantryItem(formData) {
 
     const itemId = formData.get("itemId");
 
-    const response = await fetch(`${STRAPI_URL}/api/pantry-items/${itemId}`, {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-      },
-    });
+    const supabase = getSupabaseAdmin();
+    const { error } = await supabase
+      .from("pantry_items")
+      .delete()
+      .eq("id", itemId)
+      .eq("owner_clerk_id", user.id);
 
-    if (!response.ok) {
+    if (error) {
       throw new Error("Failed to delete item");
     }
 
@@ -306,29 +297,22 @@ export async function updatePantryItem(formData) {
     const name = formData.get("name");
     const quantity = formData.get("quantity");
 
-    const response = await fetch(`${STRAPI_URL}/api/pantry-items/${itemId}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-      },
-      body: JSON.stringify({
-        data: {
-          name,
-          quantity,
-        },
-      }),
-    });
+    const supabase = getSupabaseAdmin();
+    const { data: item, error } = await supabase
+      .from("pantry_items")
+      .update({ name, quantity })
+      .eq("id", itemId)
+      .eq("owner_clerk_id", user.id)
+      .select(ITEM_FIELDS)
+      .single();
 
-    if (!response.ok) {
+    if (error) {
       throw new Error("Failed to update item");
     }
 
-    const data = await response.json();
-
     return {
       success: true,
-      item: data.data,
+      item,
       message: "Item updated successfully",
     };
   } catch (error) {

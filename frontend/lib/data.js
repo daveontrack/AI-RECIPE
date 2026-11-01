@@ -55,6 +55,15 @@ export const HOW_IT_WORKS_STEPS = [
   },
 ];
 
+// MealDB lists an "Ethiopian" area but ships no meals for it, so the dashboard
+// highlights the cuisine through the AI recipe flow instead of an area listing.
+export const FEATURED_CUISINE = {
+  area: "Ethiopian",
+  blurb:
+    "Slow-simmered wat, spongy injera and berbere spice — the AI chef cooks Ethiopian classics with you.",
+  dishes: ["Doro Wat", "Shiro", "Beef Tibs"],
+};
+
 // Helper function for category emojis
 export function getCategoryEmoji(category) {
   const emojiMap = {
@@ -86,6 +95,7 @@ export function getCountryFlag(country) {
     Croatian: "⚽",
     Dutch: "🌷",
     Egyptian: "🐫",
+    Ethiopian: "🇪🇹",
     Filipino: "🌴",
     French: "🥐",
     Greek: "🏛️",

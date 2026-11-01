@@ -1,17 +1,37 @@
 "use server";
 
 import { checkUser } from "@/lib/checkUser";
+import { getSupabaseAdmin } from "@/lib/supabase";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { freeMealRecommendations, proTierLimit } from "@/lib/arcjet";
 import { request } from "@arcjet/next";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const STRAPI_URL =
-  process.env.NEXT_PUBLIC_STRAPI_URL || "http://localhost:1337";
-const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
 const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
 
+// camelCase aliases keep the UI components on their existing field names
+const RECIPE_FIELDS = `
+  id,
+  documentId:id,
+  title,
+  description,
+  cuisine,
+  category,
+  ingredients,
+  instructions,
+  imageUrl:image_url,
+  isPublic:is_public,
+  prepTime:prep_time,
+  cookTime:cook_time,
+  servings,
+  nutrition,
+  tips,
+  substitutions,
+  createdAt:created_at
+`;
+
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 // Helper function to normalize recipe title
 function normalizeTitle(title) {
@@ -83,57 +103,48 @@ export async function getOrGenerateRecipe(formData) {
     const isPro = user.subscriptionTier === "pro";
 
     // Step 1: Check if recipe already exists in DB (case-insensitive search)
-    const searchResponse = await fetch(
-      `${STRAPI_URL}/api/recipes?filters[title][$eqi]=${encodeURIComponent(
-        normalizedTitle
-      )}&populate=*`,
-      {
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        cache: "no-store",
+    const supabase = getSupabaseAdmin();
+    const { data: existingRecipe, error: searchError } = await supabase
+      .from("recipes")
+      .select(RECIPE_FIELDS)
+      .ilike("title", normalizedTitle)
+      .limit(1)
+      .maybeSingle();
+
+    if (searchError) {
+      throw new Error(`Failed to search recipes: ${searchError.message}`);
+    }
+
+    if (existingRecipe) {
+      console.log("✅ Recipe found in database:", existingRecipe.id);
+
+      // Check if user has saved this recipe
+      const { data: savedRow, error: savedError } = await supabase
+        .from("saved_recipes")
+        .select("id")
+        .eq("user_clerk_id", user.id)
+        .eq("recipe_id", existingRecipe.id)
+        .maybeSingle();
+
+      if (savedError) {
+        console.error("❌ Failed to check saved recipe:", savedError.message);
       }
-    );
 
-    if (searchResponse.ok) {
-      const searchData = await searchResponse.json();
-
-      if (searchData.data && searchData.data.length > 0) {
-        console.log("✅ Recipe found in database:", searchData.data[0].id);
-
-        // Check if user has saved this recipe
-        const savedRecipeResponse = await fetch(
-          `${STRAPI_URL}/api/saved-recipes?filters[user][id][$eq]=${user.id}&filters[recipe][id][$eq]=${searchData.data[0].id}`,
-          {
-            headers: {
-              Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-            },
-            cache: "no-store",
-          }
-        );
-
-        let isSaved = false;
-        if (savedRecipeResponse.ok) {
-          const savedData = await savedRecipeResponse.json();
-          isSaved = savedData.data && savedData.data.length > 0;
-        }
-
-        return {
-          success: true,
-          recipe: searchData.data[0],
-          recipeId: searchData.data[0].id,
-          isSaved: isSaved,
-          fromDatabase: true,
-          isPro,
-          message: "Recipe loaded from database",
-        };
-      }
+      return {
+        success: true,
+        recipe: existingRecipe,
+        recipeId: existingRecipe.id,
+        isSaved: Boolean(savedRow),
+        fromDatabase: true,
+        isPro,
+        message: "Recipe loaded from database",
+      };
     }
 
     // Step 2: Recipe doesn't exist, generate with Gemini
     console.log("🤖 Recipe not found, generating with Gemini...");
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
     const prompt = `
 You are a professional chef and recipe expert. Generate a detailed recipe for: "${normalizedTitle}"
@@ -272,48 +283,39 @@ Guidelines:
     const imageUrl = await fetchRecipeImage(normalizedTitle);
 
     // Step 4: Save generated recipe to database
-    const strapiRecipeData = {
-      data: {
+    console.log(
+      "📤 Saving new recipe to database with title:",
+      normalizedTitle
+    );
+
+    const { data: createdRecipe, error: createError } = await supabase
+      .from("recipes")
+      .insert({
         title: normalizedTitle,
         description: recipeData.description,
         cuisine,
         category,
         ingredients: recipeData.ingredients,
         instructions: recipeData.instructions,
-        prepTime: Number(recipeData.prepTime),
-        cookTime: Number(recipeData.cookTime),
+        prep_time: Number(recipeData.prepTime),
+        cook_time: Number(recipeData.cookTime),
         servings: Number(recipeData.servings),
         nutrition: recipeData.nutrition,
         tips: recipeData.tips,
         substitutions: recipeData.substitutions,
-        imageUrl: imageUrl || "",
-        isPublic: true,
-        author: user.id,
-      },
-    };
+        image_url: imageUrl || "",
+        is_public: true,
+        author_clerk_id: user.id,
+      })
+      .select("id")
+      .single();
 
-    console.log(
-      "📤 Saving new recipe to database with title:",
-      normalizedTitle
-    );
-
-    const createRecipeResponse = await fetch(`${STRAPI_URL}/api/recipes`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-      },
-      body: JSON.stringify(strapiRecipeData),
-    });
-
-    if (!createRecipeResponse.ok) {
-      const errorText = await createRecipeResponse.text();
-      console.error("❌ Failed to save recipe:", errorText);
+    if (createError) {
+      console.error("❌ Failed to save recipe:", createError.message);
       throw new Error("Failed to save recipe to database");
     }
 
-    const createdRecipe = await createRecipeResponse.json();
-    console.log("✅ Recipe saved to database:", createdRecipe.data.id);
+    console.log("✅ Recipe saved to database:", createdRecipe.id);
 
     return {
       success: true,
@@ -324,7 +326,7 @@ Guidelines:
         cuisine,
         imageUrl: imageUrl || "",
       },
-      recipeId: createdRecipe.data.id,
+      recipeId: createdRecipe.id,
       isSaved: false,
       fromDatabase: false,
       recommendationsLimit: isPro ? "unlimited" : 5,
@@ -350,57 +352,46 @@ export async function saveRecipeToCollection(formData) {
       throw new Error("Recipe ID is required");
     }
 
-    // Check if already saved
-    const existingResponse = await fetch(
-      `${STRAPI_URL}/api/saved-recipes?filters[user][id][$eq]=${user.id}&filters[recipe][id][$eq]=${recipeId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        cache: "no-store",
-      }
-    );
+    const supabase = getSupabaseAdmin();
 
-    if (existingResponse.ok) {
-      const existingData = await existingResponse.json();
-      if (existingData.data && existingData.data.length > 0) {
-        return {
-          success: true,
-          alreadySaved: true,
-          message: "Recipe is already in your collection",
-        };
-      }
+    // Check if already saved
+    const { data: existingSave } = await supabase
+      .from("saved_recipes")
+      .select("id")
+      .eq("user_clerk_id", user.id)
+      .eq("recipe_id", recipeId)
+      .maybeSingle();
+
+    if (existingSave) {
+      return {
+        success: true,
+        alreadySaved: true,
+        message: "Recipe is already in your collection",
+      };
     }
 
-    // Create saved recipe relation
-    const saveResponse = await fetch(`${STRAPI_URL}/api/saved-recipes`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-      },
-      body: JSON.stringify({
-        data: {
-          user: user.id,
-          recipe: recipeId,
-          savedAt: new Date().toISOString(),
-        },
-      }),
-    });
+    // Create saved recipe row
+    const { data: savedRecipe, error: saveError } = await supabase
+      .from("saved_recipes")
+      .insert({
+        user_clerk_id: user.id,
+        recipe_id: recipeId,
+        saved_at: new Date().toISOString(),
+      })
+      .select("id, recipe_id, saved_at")
+      .single();
 
-    if (!saveResponse.ok) {
-      const errorText = await saveResponse.text();
-      console.error("❌ Failed to save recipe:", errorText);
+    if (saveError) {
+      console.error("❌ Failed to save recipe:", saveError.message);
       throw new Error("Failed to save recipe to collection");
     }
 
-    const savedRecipe = await saveResponse.json();
-    console.log("✅ Recipe saved to user collection:", savedRecipe.data.id);
+    console.log("✅ Recipe saved to user collection:", savedRecipe.id);
 
     return {
       success: true,
       alreadySaved: false,
-      savedRecipe: savedRecipe.data,
+      savedRecipe,
       message: "Recipe saved to your collection!",
     };
   } catch (error) {
@@ -422,43 +413,34 @@ export async function removeRecipeFromCollection(formData) {
       throw new Error("Recipe ID is required");
     }
 
-    // Find saved recipe relation
-    const searchResponse = await fetch(
-      `${STRAPI_URL}/api/saved-recipes?filters[user][id][$eq]=${user.id}&filters[recipe][id][$eq]=${recipeId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        cache: "no-store",
-      }
-    );
+    const supabase = getSupabaseAdmin();
 
-    if (!searchResponse.ok) {
+    // Find saved recipe row
+    const { data: existingSave, error: searchError } = await supabase
+      .from("saved_recipes")
+      .select("id")
+      .eq("user_clerk_id", user.id)
+      .eq("recipe_id", recipeId)
+      .maybeSingle();
+
+    if (searchError) {
       throw new Error("Failed to find saved recipe");
     }
 
-    const searchData = await searchResponse.json();
-
-    if (!searchData.data || searchData.data.length === 0) {
+    if (!existingSave) {
       return {
         success: true,
         message: "Recipe was not in your collection",
       };
     }
 
-    // Delete saved recipe relation
-    const savedRecipeId = searchData.data[0].id;
-    const deleteResponse = await fetch(
-      `${STRAPI_URL}/api/saved-recipes/${savedRecipeId}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-      }
-    );
+    // Delete saved recipe row
+    const { error: deleteError } = await supabase
+      .from("saved_recipes")
+      .delete()
+      .eq("id", existingSave.id);
 
-    if (!deleteResponse.ok) {
+    if (deleteError) {
       throw new Error("Failed to remove recipe from collection");
     }
 
@@ -506,34 +488,28 @@ export async function getRecipesByPantryIngredients() {
     }
 
     // Get user's pantry items
-    const pantryResponse = await fetch(
-      `${STRAPI_URL}/api/pantry-items?filters[owner][id][$eq]=${user.id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        cache: "no-store",
-      }
-    );
+    const supabase = getSupabaseAdmin();
+    const { data: pantryItems, error: pantryError } = await supabase
+      .from("pantry_items")
+      .select("name")
+      .eq("owner_clerk_id", user.id);
 
-    if (!pantryResponse.ok) {
+    if (pantryError) {
       throw new Error("Failed to fetch pantry items");
     }
 
-    const pantryData = await pantryResponse.json();
-
-    if (!pantryData.data || pantryData.data.length === 0) {
+    if (!pantryItems || pantryItems.length === 0) {
       return {
         success: false,
         message: "Your pantry is empty. Add ingredients first!",
       };
     }
 
-    const ingredients = pantryData.data.map((item) => item.name).join(", ");
+    const ingredients = pantryItems.map((item) => item.name).join(", ");
 
     console.log("🥘 Finding recipes for ingredients:", ingredients);
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
     const prompt = `
 You are a professional chef. Given these available ingredients: ${ingredients}
@@ -601,25 +577,20 @@ export async function getSavedRecipes() {
       throw new Error("User not authenticated");
     }
 
-    // Fetch saved recipes with populated recipe data
-    const response = await fetch(
-      `${STRAPI_URL}/api/saved-recipes?filters[user][id][$eq]=${user.id}&populate[recipe][populate]=*&sort=savedAt:desc`,
-      {
-        headers: {
-          Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-        },
-        cache: "no-store",
-      }
-    );
+    // Fetch saved recipes with the joined recipe row
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from("saved_recipes")
+      .select(`savedAt:saved_at, recipe:recipes(${RECIPE_FIELDS})`)
+      .eq("user_clerk_id", user.id)
+      .order("saved_at", { ascending: false });
 
-    if (!response.ok) {
+    if (error) {
       throw new Error("Failed to fetch saved recipes");
     }
 
-    const data = await response.json();
-
-    // Extract recipes from saved-recipes relations
-    const recipes = data.data
+    // Extract recipes from saved-recipe rows
+    const recipes = (data ?? [])
       .map((savedRecipe) => savedRecipe.recipe)
       .filter(Boolean); // Remove any null recipes
 

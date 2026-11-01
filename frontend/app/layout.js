@@ -3,13 +3,13 @@ import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
 import Header from "@/components/Header";
+import LogoMark from "@/components/LogoMark";
 import { neobrutalism } from "@clerk/themes";
-import Image from "next/image";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata = {
-  title: "Servd - AI Recipes Platform",
+  title: "davecookai",
   description: "",
 };
 
@@ -33,16 +33,13 @@ export default function RootLayout({ children }) {
           <footer className="py-8 px-4 border-t">
             <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
               <div className="flex items-center gap-3">
-                <Image
-                  src="/logo.png"
-                  alt="Servd Logo"
-                  width={48}
-                  height={48}
-                  className="w-14"
-                />
+                <LogoMark className="h-7 w-7 text-stone-900" />
+                <span className="text-2xl font-bold tracking-tight text-stone-900">
+                  davecookai
+                </span>
               </div>
               <p className="text-stone-500 text-sm">
-                Made with 💗 by RoadsideCoder
+                Made with 💗 by dawit beriso
               </p>
             </div>
           </footer>

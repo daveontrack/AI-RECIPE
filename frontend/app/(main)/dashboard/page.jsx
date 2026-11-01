@@ -9,7 +9,11 @@ import {
   getCategories,
   getAreas,
 } from "@/actions/mealdb.actions";
-import { getCategoryEmoji, getCountryFlag } from "@/lib/data";
+import {
+  getCategoryEmoji,
+  getCountryFlag,
+  FEATURED_CUISINE,
+} from "@/lib/data";
 
 export default async function DashboardPage() {
   // Fetch data server-side
@@ -27,7 +31,7 @@ export default async function DashboardPage() {
         {/* Header */}
         <div className="mb-5">
           <h1 className="text-5xl md:text-7xl font-bold text-stone-900 mb-4 tracking-tight leading-tight">
-            Fresh Recipes, Servd Daily 🔥
+            Fresh Recipes, davecookai Daily 🔥
           </h1>
           <p className="text-xl text-stone-600 font-light max-w-2xl">
             Discover thousands of recipes from around the world. Cook, create,
@@ -125,6 +129,62 @@ export default async function DashboardPage() {
           </section>
         )}
 
+        {/* Featured Cuisine - Ethiopian */}
+        <section className="mb-24">
+          <div className="border-2 border-stone-900 bg-white">
+            <div className="h-2 w-full bg-linear-to-r from-emerald-600 via-yellow-400 to-red-600" />
+            <div className="flex flex-col gap-6 p-8 md:flex-row md:items-center md:p-10">
+              <div className="text-6xl">
+                {getCountryFlag(FEATURED_CUISINE.area)}
+              </div>
+
+              <div className="flex-1">
+                <Badge
+                  variant="outline"
+                  className="mb-3 border-2 border-orange-600 bg-orange-50 font-bold uppercase tracking-wide text-orange-700"
+                >
+                  <Flame className="mr-1 h-4 w-4" />
+                  Featured Cuisine
+                </Badge>
+
+                <h2 className="mb-2 text-3xl font-bold text-stone-900 md:text-4xl">
+                  {FEATURED_CUISINE.area} Cuisine
+                </h2>
+
+                <p className="text-lg font-light text-stone-600">
+                  {FEATURED_CUISINE.blurb}
+                </p>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {FEATURED_CUISINE.dishes.map((dish) => (
+                    <Link
+                      key={dish}
+                      href={`/recipe?cook=${encodeURIComponent(dish)}`}
+                    >
+                      <Badge
+                        variant="secondary"
+                        className="cursor-pointer border border-stone-200 bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 hover:border-orange-600 hover:text-orange-600"
+                      >
+                        {dish}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+
+              <Link
+                href={`/recipe?cook=${encodeURIComponent(
+                  FEATURED_CUISINE.dishes[0]
+                )}`}
+              >
+                <Button className="w-fit border-2 border-orange-700 bg-orange-600 px-6 py-5 font-bold text-white hover:bg-orange-700">
+                  Cook it now <ArrowRight className="ml-2 h-5 w-5" />
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </section>
+
         {/* Browse by Categories */}
         <section className="mb-24">
           <div className="mb-8">
@@ -162,30 +222,37 @@ export default async function DashboardPage() {
               Explore World Cuisines
             </h2>
             <p className="text-stone-600 text-lg font-light">
-              Travel the globe through food
+              Travel the globe through food — {areas.length} cuisines to cook
             </p>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {areas.map((area) => (
-              <Link
-                key={area.strArea}
-                href={`/recipes/cuisine/${area.strArea
-                  .toLowerCase()
-                  .replace(/\s+/g, "-")}`}
-              >
-                <div className="bg-stone-50 p-5 border-2 border-stone-200 hover:border-orange-600 hover:shadow-lg transition-all group cursor-pointer">
-                  <div className="flex items-center gap-3">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            {areas
+              .filter((area) => area.strArea !== FEATURED_CUISINE.area)
+              .map((area) => (
+                <Link
+                  key={area.strArea}
+                  href={`/recipes/cuisine/${area.strArea
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, "-")
+                    .replace(/^-+|-+$/g, "")}`}
+                  className="group"
+                >
+                  <div className="flex h-full items-center gap-3 border-2 border-stone-200 bg-white p-4 transition-all group-hover:border-orange-600 group-hover:shadow-lg">
                     <span className="text-3xl">
                       {getCountryFlag(area.strArea)}
                     </span>
-                    <span className="font-bold text-stone-900 group-hover:text-orange-600 transition-colors text-sm">
-                      {area.strArea}
-                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-stone-900 group-hover:text-orange-600">
+                        {area.strArea}
+                      </p>
+                      <p className="truncate text-xs text-stone-500">
+                        {area.strCountry}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              ))}
           </div>
         </section>
       </div>

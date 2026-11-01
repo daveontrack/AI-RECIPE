@@ -5,10 +5,10 @@ import Link from "next/link";
 import { SignedIn, SignedOut, SignInButton, SignUpButton } from "@clerk/nextjs";
 import HowToCookModal from "./HowToCookModal";
 import PricingModal from "./PricingModal";
-import Image from "next/image";
 import { checkUser } from "@/lib/checkUser";
 import { Badge } from "./ui/badge";
 import UserDropdown from "./UserDropdown";
+import LogoMark from "./LogoMark";
 
 export default async function Header() {
   const user = await checkUser();
@@ -19,15 +19,12 @@ export default async function Header() {
         {/* Logo */}
         <Link
           href={user ? "/dashboard" : "/"}
-          className="flex items-center gap-2 group"
+          className="flex shrink-0 items-center gap-2 group"
         >
-          <Image
-            src="/orange-logo.png"
-            alt="Servd Logo"
-            width={60}
-            height={60}
-            className="w-16"
-          />
+          <LogoMark className="h-6 w-6 shrink-0 text-orange-600 sm:h-8 sm:w-8" />
+          <span className="whitespace-nowrap text-xl font-bold tracking-tight text-orange-600 sm:text-3xl">
+            davecookai
+          </span>
         </Link>
 
         {/* Navigation Links */}
